@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8-bit Coin Flip</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const W = 192, H = 144;              // низкое "8-битное" разрешение
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+cv.width = W; cv.height = H;
+
+function resize(){
+  const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
+  cv.style.width = W * s + 'px';
+  cv.style.height = H * s + 'px';
+}
+addEventListener('resize', resize); resize();
+
+// Пиксельные символы 5x7
+const GLYPHS = {
+  BTC: [" # # ","#### "," #  #"," ### "," #  #","#### "," # # "],
+  ETH: ["#####","     ","     "," ### ","     ","     ","#####"],
+  USD: ["  #  "," ####","# #  "," ### ","  # #","#### ","  #  "],
+  EUR: ["  ###"," #   ","#### "," #   ","#### "," #   ","  ###"],
+  RUB: ["#### ","#   #","#### ","#    ","###  ","#    ","#    "]
+};
+
+const R = 9; // радиус монеты в пикселях
+// Готовим лицевую сторону каждой монеты как битмап (1 = белый, 0 = чёрный, -1 = прозрачно)
+function makeFace(glyph){
+  const n = R * 2 + 1, face = [];
+  for (let y = 0; y < n; y++){
+    const row = [];
+    for (let x = 0; x < n; x++){
+      const dx = x - R, dy = y - R, d = Math.sqrt(dx*dx + dy*dy);
+      if (d > R + 0.3) row.push(-1);
+      else if (d > R - 1.7 && d <= R - 0.7) row.push(0);   // внутренний обод
+      else row.push(1);
+    }
+    face.push(row);
+  }
+  const g = GLYPHS[glyph], gx = R - 2, gy = R - 3;
+  for (let y = 0; y < 7; y++)
+    for (let x = 0; x < 5; x++)
+      if (g[y][x] === '#') face[gy + y][gx + x] = 0;
+  return face;
+}
+const FACES = {}; for (const k in GLYPHS) FACES[k] = makeFace(k);
+
+// Рисуем монету с эффектом вращения (сжатие по горизонтали)
+function drawCoin(cx, cy, angle, glyph){
+  const face = FACES[glyph], n = R * 2 + 1;
+  const sx = Math.cos(angle);
+  const w = Math.abs(sx);
+  cx = Math.round(cx); cy = Math.round(cy);
+  if (w < 0.12){ // ребро монеты
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(cx - 1, cy - R, 2, n);
+    return;
+  }
+  const half = Math.round(R * w);
+  const back = sx < 0; // обратная сторона: без символа, с полосками
+  for (let tx = -half; tx <= half; tx++){
+    let srcX = Math.round(tx / w) + R;
+    if (srcX < 0 || srcX >= n) continue;
+    for (let y = 0; y < n; y++){
+      let v = face[y][back ? n - 1 - srcX : srcX];
+      if (v === -1) continue;
+      if (back && v === 0){
+        const dx = srcX - R, dy = y - R;
+        if (Math.sqrt(dx*dx + dy*dy) < R - 2) v = 1;
+      }
+      if (back && v === 1 && (y % 4 === 0) && Math.abs(y - R) < R - 3 && Math.abs(srcX - R) < R - 3) v = 0;
+      ctx.fillStyle = v ? '#fff' : '#000';
+      ctx.fillRect(cx + tx, cy - R + y, 1, 1);
+    }
+  }
+  // контур, чтобы край был виден в профиль
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(cx - half, cy - 1, 1, 2);
+  ctx.fillRect(cx + half, cy - 1, 1, 2);
+}
+
+// Состояние сцены
+const GROUND = H - 20, G = 0.18;
+let main, kids, sparks, phase, timer;
+
+function reset(){
+  main = { x: W/2, y: GROUND - R, vy: -4.6, a: 0, spin: 0.35 };
+  kids = []; sparks = []; phase = 'up'; timer = 0;
+}
+reset();
+
+function burst(){
+  const types = ['ETH','USD','EUR','RUB'];
+  const dirs  = [[-2.2,-1.4],[-0.9,-2.3],[0.9,-2.3],[2.2,-1.4]];
+  types.forEach((t, i) => kids.push({
+    x: main.x, y: main.y, vx: dirs[i][0], vy: dirs[i][1],
+    a: Math.random()*6, spin: 0.25 + Math.random()*0.2, t
+  }));
+  for (let i = 0; i < 24; i++){
+    const ang = Math.PI * 2 * i / 24, sp = 1.5 + Math.random()*1.5;
+    sparks.push({ x: main.x, y: main.y, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp, life: 18 + Math.random()*10 });
+  }
+}
+
+function step(){
+  if (phase === 'up' || phase === 'down'){
+    main.vy += G; main.y += main.vy; main.a += main.spin;
+    if (phase === 'up' && main.vy >= 0){ phase = 'down'; burst(); }
+    if (phase === 'down' && main.y >= GROUND - R){
+      main.y = GROUND - R; main.a = 0; phase = 'land'; timer = 0;
+    }
+  } else if (phase === 'land'){
+    if (++timer > 90 && kids.length === 0) reset();
+  }
+  for (const k of kids){ k.vy += G; k.x += k.vx; k.y += k.vy; k.a += k.spin; }
+  kids = kids.filter(k => k.y < H + R*2);
+  for (const s of sparks){ s.x += s.vx; s.y += s.vy; s.vx *= 0.94; s.vy *= 0.94; s.life--; }
+  sparks = sparks.filter(s => s.life > 0);
+}
+
+function draw(){
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  // пунктирная земля
+  ctx.fillStyle = '#fff';
+  for (let x = 0; x < W; x += 4) ctx.fillRect(x, GROUND, 2, 1);
+  // тень монеты
+  const h = Math.max(0, (GROUND - R) - main.y);
+  const sw = Math.max(2, Math.round(R - h / 8));
+  for (let x = -sw; x <= sw; x += 2) ctx.fillRect(Math.round(main.x) + x, GROUND + 2, 1, 1);
+  for (const s of sparks) ctx.fillRect(Math.round(s.x), Math.round(s.y), 1, 1);
+  for (const k of kids) drawCoin(k.x, k.y, k.a, k.t);
+  drawCoin(main.x, main.y, main.a, 'BTC');
+}
+
+let last = 0, acc = 0;
+function loop(t){
+  acc += Math.min(100, t - last); last = t;
+  while (acc >= 1000/60){ step(); acc -= 1000/60; }
+  draw();
+  requestAnimationFrame(loop);
+}
+const pf = +new URLSearchParams(location.search).get('frame');
+if (pf){ for (let i = 0; i < pf; i++) step(); draw(); }
+else requestAnimationFrame(t => { last = t; loop(t); });
+cv.addEventListener('click', reset);
+</script>
+</body>
+</html>
